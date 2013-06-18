@@ -25,7 +25,9 @@ init_winsock() {
 
 #else
 
-#include<netdb.h>
+#include <netdb.h>
+#include <unistd.h>
+#define INVALID_SOCKET (-1)
 
 static void	
 init_winsock() {
