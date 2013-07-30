@@ -1,5 +1,6 @@
 local bson = require "bson"
-local conn = require "mongo.conn"
+local socket = require "mongo.socket"
+local driver = require "mongo.driver"
 local rawget = rawget
 local assert = assert
 
@@ -34,6 +35,9 @@ local client_meta = {
 
 		return "[mongo client : " .. self.host .. port_string .."]"
 	end,
+	__gc = function(self)
+		self:disconnect()
+	end
 }
 
 local mongo_db = {}
@@ -58,14 +62,15 @@ local collection_meta = {
 }
 
 function mongo.client( obj )
-	obj.sock = assert(conn(obj.host, obj.port),"Connect failed")
+	obj.port = obj.port or 27017
+	obj.__id = 0
+	obj.__sock = assert(socket.open(obj.host, obj.port),"Connect failed")
 	return setmetatable(obj, client_meta)
 end
 
 function mongo_client:getDB(dbname)
 	local db = {
 		connection = self,
-		__sock = self.sock,
 		name = dbname,
 		full_name = dbname,
 		database = db,
@@ -76,7 +81,16 @@ function mongo_client:getDB(dbname)
 end
 
 function mongo_client:disconnect()
-	self.__sock:close()
+	if self.__sock then
+		socket.close(self.__sock)
+		self.__sock = nil
+	end
+end
+
+function mongo_client:genId()
+	local id = self.__id + 1
+	self.__id = id
+	return id
 end
 
 function mongo_client:runCommand(cmd)
@@ -86,17 +100,28 @@ function mongo_client:runCommand(cmd)
 	return self.admin:runCommand(cmd)
 end
 
+local function get_reply(sock, result)
+	local length = driver.length(socket.read(sock, 4))
+	local reply = socket.read(sock, length)
+	return reply, driver.reply(reply, result)
+end
+
 function mongo_db:runCommand(cmd)
-	local request_id = self.__sock:query(0, self.__cmd, 0, 1, bson_encode(cmd))
-	local reply_id, data, doc = self.__sock:reply()
+	local request_id = self.connection:genId()
+	local sock = self.connection.__sock
+	local pack = driver.query(request_id, 0, self.__cmd, 0, 1, bson_encode(cmd))
+	-- todo: check send
+	socket.write(sock, pack)
+
+	local _, succ, reply_id, doc = get_reply(sock)
 	assert(request_id == reply_id, "Reply from mongod error")
+	-- todo: check succ
 	return bson_decode(doc)
 end
 
 function mongo_db:getCollection(collection)
 	local col = {
 		connection = self.connection,
-		__sock = self.__sock,
 		name = collection,
 		full_name = self.full_name .. "." .. collection,
 		database = self.database,
@@ -108,11 +133,14 @@ end
 mongo_collection.getCollection = mongo_db.getCollection
 
 function mongo_collection:insert(doc)
-	-- flags support 1: ContinueOnError
 	if doc._id == nil then
 		doc._id = bson.objectid()
 	end
-	self.__sock:insert(0, self.full_name, bson_encode(doc))
+	local sock = self.connection.__sock
+	local pack = driver.insert(0, self.full_name, bson_encode(doc))
+	-- todo: check send
+	-- flags support 1: ContinueOnError
+	socket.write(sock, pack)
 end
 
 function mongo_collection:batch_insert(docs)
@@ -122,22 +150,38 @@ function mongo_collection:batch_insert(docs)
 		end
 		docs[i] = bson_encode(docs[i])
 	end
-	self.__sock:insert(self.full_name, 0, docs)
+	local sock = self.connection.__sock
+	local pack = driver.insert(0, self.full_name, docs)
+	-- todo: check send
+	socket.write(sock, pack)
 end
 
 function mongo_collection:update(selector,update,upsert,multi)
 	local flags = (upsert and 1 or 0) + (multi and 2 or 0)
-	self.__sock:update(self.full_name, flags, bson_encode(selector), bson_encode(update))
+	local sock = self.connection.__sock
+	local pack = driver.update(self.full_name, flags, bson_encode(selector), bson_encode(update))
+	-- todo: check send
+	socket.write(sock, pack)
 end
 
 function mongo_collection:delete(selector, single)
-	self.__sock:delete(self.full_name, single, bson_encode(selector))
+	local sock = self.connection.__sock
+	local pack = driver.delete(self.full_name, single, bson_encode(selector))
+	-- todo: check send
+	socket.write(sock, pack)
 end
 
 function mongo_collection:findOne(query, selector)
-	local request_id = self.__sock:query(0, self.full_name, 0, 1, query and bson_encode(query) or empty_bson, selector and bson_encode(selector))
-	local reply_id, data, doc = self.__sock:reply()
+	local request_id = self.connection:genId()
+	local sock = self.connection.__sock
+	local pack = driver.query(request_id, 0, self.full_name, 0, 1, query and bson_encode(query) or empty_bson, selector and bson_encode(selector))
+
+	-- todo: check send
+	socket.write(sock, pack)
+
+	local _, succ, reply_id, doc = get_reply(sock)
 	assert(request_id == reply_id, "Reply from mongod error")
+	-- todo: check succ
 	return bson_decode(doc)
 end
 
@@ -148,6 +192,7 @@ function mongo_collection:find(query, selector)
 		__selector = selector and bson_encode(selector),
 		__ptr = nil,
 		__data = nil,
+		__cursor = nil,
 		__document = {},
 		__flags = 0,
 	} , cursor_meta)
@@ -158,29 +203,51 @@ function mongo_cursor:hasNext()
 		if self.__document == nil then
 			return false
 		end
-		local sock = self.__collection.__sock
-		local request_id
+		local conn = self.__collection.connection
+		local request_id = conn:genId()
+		local sock = conn.__sock
+		local pack
 		if self.__data == nil then
-			request_id = sock:query(self.__flags, self.__collection.full_name,0,0,self.__query,self.__selector)
+			pack = driver.query(request_id, self.__flags, self.__collection.full_name,0,0,self.__query,self.__selector)
 		else
-			request_id = sock:more(self.__collection.full_name,0,self.__data)
-		end
-
-		local reply_id, data, doc = sock:reply(self.__document)
-		assert(request_id == reply_id, "Reply from mongod error")
-		if data == nil then
-			if doc then
-				local err = bson_decode(doc)
-				error(err["$err"])
+			if self.__cursor then
+				pack = driver.more(request_id, self.__collection.full_name,0,self.__cursor)
 			else
+				-- no more
 				self.__document = nil
 				self.__data = nil
 				return false
 			end
 		end
 
-		self.__data = data
-		self.__ptr = 1
+		--todo: check send
+		socket.write(sock, pack)
+
+		local data, succ, reply_id, doc, cursor = get_reply(sock, self.__document)
+		assert(request_id == reply_id, "Reply from mongod error")
+		if succ then
+			if doc then
+				self.__data = data
+				self.__ptr = 1
+				self.__cursor = cursor
+				return true
+			else
+				self.__document = nil
+				self.__data = nil
+				self.__cursor = nil
+				return false
+			end
+		else
+			self.__document = nil
+			self.__data = nil
+			self.__cursor = nil
+			if doc then
+				local err = bson_decode(doc)
+				error(err["$err"])
+			else
+				error("Reply from mongod error")
+			end
+		end
 	end
 
 	return true
@@ -201,8 +268,11 @@ end
 
 function mongo_cursor:close()
 	-- todo: warning hasNext after close
-	if self.__data then
-		self.__collection.__sock:kill(self.__data)
+	if self.__cursor then
+		local sock = self.__collection.connection.__sock
+		local pack = driver.kill(self.__cursor)
+		-- todo: check send
+		socket.write(sock, pack)
 	end
 end
 

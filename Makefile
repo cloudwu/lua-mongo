@@ -11,10 +11,10 @@ win: mongo.dll
 
 linux: mongo.so
 
-mongo.dll : lua-mongo.c
+mongo.dll : lua-mongo.c lua-socket.c
 	gcc --shared -Wall -g $^ -o$@ $(LUALIB) $(SOCKETLIB)
 
-mongo.so : lua-mongo.c
+mongo.so : lua-mongo.c lua-socket.c
 	gcc --shared -Wall -fPIC -g $^ -o$@ 
 
 clean:
