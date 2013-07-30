@@ -73,9 +73,11 @@ function mongo_client:getDB(dbname)
 		connection = self,
 		name = dbname,
 		full_name = dbname,
-		database = db,
+		database = false,
 		__cmd = dbname .. "." .. "$cmd",
 	}
+
+	db.database = db
 
 	return setmetatable(db, db_meta)
 end
