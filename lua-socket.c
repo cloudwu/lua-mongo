@@ -98,22 +98,28 @@ lread(lua_State *L) {
 	if (sz > LOCALBUFFER) {
 		buffer = lua_newuserdata(L, sz);
 	}
+  char * ptr = buffer;
 	for (;;) {
-		int err = recv(fd, buffer, sz, 0);
-		if (err < 0) {
+		int bytes = recv(fd, ptr, sz, 0);
+		if (bytes < 0) {
 			switch (errno) {
 			case EAGAIN:
 			case EINTR:
 				continue;
 			}
-		}
-		if (err != sz) {
 			return 0;
 		}
-		break;
+		if (bytes == 0) {
+			return 0;
+		}
+		if (bytes < sz) {
+			ptr += bytes;
+			sz -= bytes;
+			return 0;
+		}
+		lua_pushlstring(L, buffer, sz);
+		return 1;
 	}
-	lua_pushlstring(L, buffer, sz);
-	return 1;
 }
 
 static int
