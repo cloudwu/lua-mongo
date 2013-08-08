@@ -30,6 +30,10 @@ init_winsock() {
 
 #endif
 
+#ifndef MSG_WAITALL
+#define MSG_WAITALL 0
+#endif
+
 #define LOCALBUFFER 8192
 
 static int
@@ -100,7 +104,7 @@ lread(lua_State *L) {
 	}
   char * ptr = buffer;
 	for (;;) {
-		int bytes = recv(fd, ptr, sz, 0);
+		int bytes = recv(fd, ptr, sz, MSG_WAITALL);
 		if (bytes < 0) {
 			switch (errno) {
 			case EAGAIN:
