@@ -5,6 +5,7 @@ local rawget = rawget
 local assert = assert
 
 local bson_encode = bson.encode
+local bson_encode_sorted = bson.encode_sorted
 local bson_decode = bson.decode
 local empty_bson = bson_encode {}
 
@@ -95,11 +96,11 @@ function mongo_client:genId()
 	return id
 end
 
-function mongo_client:runCommand(cmd)
+function mongo_client:runCommand(...)
 	if not self.admin then
 		self.admin = self:getDB "admin"
 	end
-	return self.admin:runCommand(cmd)
+	return self.admin:runCommand(...)
 end
 
 local function get_reply(sock, result)
@@ -108,10 +109,16 @@ local function get_reply(sock, result)
 	return reply, driver.reply(reply, result)
 end
 
-function mongo_db:runCommand(cmd)
+function mongo_db:runCommand(cmd,cmd_v,...)
 	local request_id = self.connection:genId()
 	local sock = self.connection.__sock
-	local pack = driver.query(request_id, 0, self.__cmd, 0, 1, bson_encode(cmd))
+	local bson_cmd
+	if not cmd_v then
+		bson_cmd = bson_encode_sorted(cmd,1)
+	else
+		bson_cmd = bson_encode_sorted(cmd,cmd_v,...)
+	end
+	local pack = driver.query(request_id, 0, self.__cmd, 0, 1, bson_cmd)
 	-- todo: check send
 	socket.write(sock, pack)
 

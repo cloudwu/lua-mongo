@@ -2,7 +2,7 @@ mongo = require "mongo"
 
 db = mongo.client { host = "localhost" }
 
-local r = db:runCommand { listDatabases = 1 }
+local r = db:runCommand "listDatabases"
 
 for k,v in ipairs(r.databases) do
 	print(v.name)
@@ -20,7 +20,7 @@ end
 print "==============="
 
 db.hello.world:insert {}
-local r = db:runCommand { getLastError = 1}
+local r = db:runCommand ("getLastError",1,"w",1)
 print(r.ok)
 
 local c = db.hello.world:find()
