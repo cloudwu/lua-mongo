@@ -1,5 +1,8 @@
+#define LUA_LIB
+
 #include <lua.h>
 #include <lauxlib.h>
+#include <string.h>
 
 #include <errno.h>
 
@@ -150,7 +153,7 @@ lwrite(lua_State *L) {
 	return 1;
 }
 
-int
+LUAMOD_API int
 luaopen_mongo_socket(lua_State *L) {
 	init_winsock();
 	luaL_checkversion(L);

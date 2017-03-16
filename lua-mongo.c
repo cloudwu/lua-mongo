@@ -1,3 +1,5 @@
+#define LUA_LIB
+
 #include <lua.h>
 #include <lauxlib.h>
 
@@ -520,7 +522,7 @@ reply_length(lua_State *L) {
 	return 1;
 }
 
-int
+LUAMOD_API int
 luaopen_mongo_driver(lua_State *L) {
 	luaL_checkversion(L);
 	luaL_Reg l[] ={
