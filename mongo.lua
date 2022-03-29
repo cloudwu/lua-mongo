@@ -194,6 +194,21 @@ function mongo_collection:findOne(query, selector)
 	return bson_decode(doc)
 end
 
+function mongo_collection:findOneSecondary(query, selector)
+	local request_id = self.connection:genId()
+	local sock = self.connection.__sock
+	local pack = driver.query(request_id, 4, self.full_name, 0, 1,
+		query and bson_encode(query) or empty_bson, selector and bson_encode(selector))
+
+	-- todo: check send
+	socket.write(sock, pack)
+
+	local _, _, reply_id, doc = get_reply(sock)
+	assert(request_id == reply_id, "Reply from mongod error")
+	-- todo: check succ
+	return bson_decode(doc)
+end
+
 function mongo_collection:find(query, selector)
 	return setmetatable( {
 		__collection = self,
@@ -204,6 +219,19 @@ function mongo_collection:find(query, selector)
 		__cursor = nil,
 		__document = {},
 		__flags = 0,
+	} , cursor_meta)
+end
+
+function mongo_collection:findSecondary(query, selector)
+	return setmetatable( {
+		__collection = self,
+		__query = query and bson_encode(query) or empty_bson,
+		__selector = selector and bson_encode(selector),
+		__ptr = nil,
+		__data = nil,
+		__cursor = nil,
+		__document = {},
+		__flags = 4,
 	} , cursor_meta)
 end
 
